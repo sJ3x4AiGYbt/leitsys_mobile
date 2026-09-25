@@ -1,25 +1,19 @@
-# Development
+# Leitsys - Mobile
 
-Your new bare-bones project includes minimal organization with a single `main.rs` file and a few assets.
+Mobile app for [leitsys_api](https://github.com/sJ3x4AiGYbt/leitsys_api), an implementation of the **Ebbinghaus spaced repetition method** for learning. Built with **Rust / Dioxus 0.7**.
 
 ```
-project/
-├─ assets/ # Any assets that are used by the app should be placed here
-├─ src/
-│  ├─ main.rs # main.rs is the entry point to your application and currently contains all components for the app
-├─ Cargo.toml # The Cargo.toml file defines the dependencies and feature flags for your project
+Question created → Step 1 (1d) → Step 2 (3d) → … → Step 7 (90d) → Mastered ✓
+                                           → wrong answer → back to Step 1
 ```
 
-### Serving Your App
+## Details
 
-Run the following command in the root of your project to start developing with the default platform:
+- Dioxus mobile target, sharing the same API as [leitsys_web](https://github.com/sJ3x4AiGYbt/leitsys_web).
+- Currently scaffolding — no app logic yet.
+
+## Development
 
 ```bash
-dx serve
+dx serve --platform mobile
 ```
-
-To run for a different platform, use the `--platform platform` flag. E.g.
-```bash
-dx serve --platform desktop
-```
-
