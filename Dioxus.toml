@@ -1,4 +1,24 @@
 [application]
+name = "Leitsys"
+
+[bundle]
+identifier = "com.leitsys.mobile"
+publisher = "sJ3x4AiGYbt"
+# Placeholder derived from assets/favicon.ico — replace with a proper 1024x1024
+# icon before submitting to the App Store / Play Store.
+icon = ["assets/icon.png"]
+
+[android]
+identifier = "com.leitsys.mobile"
+min_sdk = 24
+target_sdk = 34
+
+[android.permissions]
+INTERNET = { description = "Required to reach the Leitsys API" }
+
+[ios]
+identifier = "com.leitsys.mobile"
+deployment_target = "15.0"
 
 [web.app]
 
