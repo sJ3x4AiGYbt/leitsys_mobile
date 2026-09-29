@@ -11,6 +11,7 @@ base64 = "0.23.1"
 dioxus = { version = "0.7.1", features = ["router"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 dioxus-sdk-time = "0.7.0"
+keyring = "4.2.0"
 reqwest = { version = "0.13.5", features = ["json", "cookies"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -20,3 +21,9 @@ default = ["mobile"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+
+# keyring's default "v1" feature only enables apple-native-keyring-store's
+# "keychain" sub-feature, which is enough on macOS but not iOS — iOS also
+# requires "protected" (see apple-native-keyring-store's compile_error!).
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain", "protected"] }

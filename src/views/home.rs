@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use crate::api;
 use crate::auth::use_auth;
+use crate::keychain;
 use crate::routes::Route;
 
 /// Placeholder landing page after login — the real dashboard (categories,
@@ -19,7 +20,9 @@ pub fn Home() -> Element {
 
     let on_logout = move |_| {
         spawn(async move {
-            let _ = api::logout().await;
+            let refresh_token = keychain::load_refresh_token();
+            let _ = api::logout(refresh_token.as_deref()).await;
+            keychain::clear_refresh_token();
             auth.logout();
             nav.replace(Route::Login {});
         });

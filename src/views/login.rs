@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::toast::{use_toast, ToastOptions};
 use crate::api;
 use crate::auth::use_auth;
+use crate::keychain;
 use crate::routes::Route;
 use crate::components::card::{Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter};
 use crate::components::button::{Button, ButtonVariant};
@@ -57,8 +58,11 @@ fn LoginForm(mut view: Signal<AuthView>) -> Element {
 
         spawn(async move {
             match api::login(&username(), &password()).await {
-                Ok(token) => {
-                    auth.login(token);
+                Ok(tokens) => {
+                    if let Some(refresh_token) = &tokens.refresh_token {
+                        keychain::store_refresh_token(refresh_token);
+                    }
+                    auth.login(tokens.access_token);
                     nav.push(Route::Home {});
                 }
                 Err(message) => {

@@ -8,17 +8,42 @@ const API_BASE_URL: &str = match option_env!("API_BASE_URL") {
     None => "http://localhost:3000",
 };
 
-/// Shared client so the refresh-token cookie set by `/auth/login` is kept
-/// across requests. Native targets store cookies in this jar directly,
-/// unlike the web build which relies on the browser's own cookie store via
-/// `fetch_credentials_include()` — a fresh `reqwest::Client` per request
-/// would otherwise start with an empty jar every time and drop the cookie.
+/// Shared client, reused across requests instead of `reqwest::Client::new()`
+/// per call (cheap to clone/reuse, and avoids rebuilding the TLS config each
+/// time).
+///
+/// The `refresh_token` cookie set by `/auth/login`/`/auth/refresh` is handled
+/// entirely by hand (see `extract_refresh_token`/`login`/`refresh`/`logout`)
+/// rather than via reqwest's built-in cookie jar: the cookie is `Secure`, so
+/// a jar would refuse to resend it over a plain-http dev API, and — more
+/// importantly — an in-memory jar doesn't survive an app restart anyway,
+/// which is the whole reason the caller persists it to the platform keychain
+/// (see `crate::keychain`) and re-attaches it manually on the next launch.
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
-        .cookie_store(true)
         .build()
         .expect("failed to build the HTTP client")
 });
+
+/// A pair of tokens returned by `/auth/login` and `/auth/refresh`: the
+/// short-lived access token (always present on success) and the rotated
+/// refresh-token cookie value (only present if the server actually sent a
+/// `Set-Cookie` — absent, for instance, if a proxy strips it). The caller is
+/// responsible for persisting `refresh_token` to the keychain.
+pub struct Tokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+}
+
+/// Reads the `refresh_token` cookie off a raw response, before its body is
+/// consumed. Works independently of any client-side cookie jar — this just
+/// parses the `Set-Cookie` response header.
+fn extract_refresh_token(response: &reqwest::Response) -> Option<String> {
+    response
+        .cookies()
+        .find(|cookie| cookie.name() == "refresh_token")
+        .map(|cookie| cookie.value().to_string())
+}
 
 #[derive(Serialize)]
 struct LoginRequest<'a> {
@@ -113,17 +138,38 @@ async fn send<T: serde::de::DeserializeOwned>(
         .map_err(|_| "Invalid response from the server".to_string())
 }
 
-pub async fn login(username: &str, pswd: &str) -> Result<String, String> {
+/// Like `send`, but also extracts the `refresh_token` cookie from the raw
+/// response before decoding its body — needed by `login`/`refresh` since
+/// they're the only endpoints that set/rotate that cookie.
+async fn send_with_refresh_token<T: serde::de::DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+) -> Result<(ApiResponse<T>, Option<String>), String> {
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "Unable to reach the server".to_string())?;
+
+    let refresh_token = extract_refresh_token(&response);
+
+    let parsed = response
+        .json::<ApiResponse<T>>()
+        .await
+        .map_err(|_| "Invalid response from the server".to_string())?;
+
+    Ok((parsed, refresh_token))
+}
+
+pub async fn login(username: &str, pswd: &str) -> Result<Tokens, String> {
     let request = CLIENT
         .post(format!("{API_BASE_URL}/auth/login"))
         .json(&LoginRequest { username, pswd });
 
-    let parsed: ApiResponse<LoginResponse> = send(request).await?;
+    let (parsed, refresh_token): (ApiResponse<LoginResponse>, Option<String>) = send_with_refresh_token(request).await?;
 
     if parsed.success {
         parsed
             .data
-            .map(|d| d.access_token)
+            .map(|d| Tokens { access_token: d.access_token, refresh_token })
             .ok_or_else(|| "Invalid response from the server".to_string())
     } else {
         Err(parsed.message.unwrap_or_else(|| "Invalid credentials".to_string()))
@@ -205,23 +251,38 @@ pub async fn reset_password(token: &str, pswd: &str) -> Result<String, String> {
     }
 }
 
-pub async fn refresh() -> Result<String, String> {
-    let request = CLIENT.post(format!("{API_BASE_URL}/auth/refresh"));
+/// Renews the access token using a previously-stored refresh token (loaded
+/// from the platform keychain by the caller — there's no cookie jar to carry
+/// it automatically). Returns the new access token plus the rotated
+/// refresh-token cookie, which the caller must persist in turn: the backend
+/// revokes the token this call was made with and issues a fresh one, so the
+/// old value stops working after this call succeeds.
+pub async fn refresh(refresh_token: Option<&str>) -> Result<Tokens, String> {
+    let mut request = CLIENT.post(format!("{API_BASE_URL}/auth/refresh"));
+    if let Some(token) = refresh_token {
+        request = request.header(reqwest::header::COOKIE, format!("refresh_token={token}"));
+    }
 
-    let parsed: ApiResponse<LoginResponse> = send(request).await?;
+    let (parsed, refresh_token): (ApiResponse<LoginResponse>, Option<String>) = send_with_refresh_token(request).await?;
 
     if parsed.success {
         parsed
             .data
-            .map(|d| d.access_token)
+            .map(|d| Tokens { access_token: d.access_token, refresh_token })
             .ok_or_else(|| "Invalid response from the server".to_string())
     } else {
         Err(parsed.message.unwrap_or_else(|| "Unable to restore the session".to_string()))
     }
 }
 
-pub async fn logout() -> Result<(), String> {
-    let request = CLIENT.post(format!("{API_BASE_URL}/auth/logout"));
+/// `refresh_token` (loaded from the keychain by the caller) lets the backend
+/// revoke the specific session being logged out of, instead of leaving it to
+/// expire naturally after 7 days.
+pub async fn logout(refresh_token: Option<&str>) -> Result<(), String> {
+    let mut request = CLIENT.post(format!("{API_BASE_URL}/auth/logout"));
+    if let Some(token) = refresh_token {
+        request = request.header(reqwest::header::COOKIE, format!("refresh_token={token}"));
+    }
 
     let parsed: ApiResponse<()> = send(request).await?;
 

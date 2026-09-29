@@ -6,6 +6,7 @@ use dioxus_sdk_time::sleep;
 mod api;
 mod auth;
 mod components;
+mod keychain;
 mod routes;
 mod views;
 
@@ -31,16 +32,29 @@ fn App() -> Element {
 
     use_effect(move || {
         spawn(async move {
-            if let Ok(token) = api::refresh().await {
-                auth.login(token);
+            // The refresh token rotates on every use — track whichever value
+            // is currently valid so the next call in this loop sends the
+            // right one instead of the one we started with.
+            let mut refresh_token = keychain::load_refresh_token();
+
+            if let Ok(tokens) = api::refresh(refresh_token.as_deref()).await {
+                auth.login(tokens.access_token);
+                if let Some(new_refresh_token) = tokens.refresh_token {
+                    keychain::store_refresh_token(&new_refresh_token);
+                    refresh_token = Some(new_refresh_token);
+                }
             }
             auth.finish_restoring();
 
             loop {
                 sleep(REFRESH_INTERVAL).await;
                 if auth.is_logged_in() {
-                    if let Ok(token) = api::refresh().await {
-                        auth.login(token);
+                    if let Ok(tokens) = api::refresh(refresh_token.as_deref()).await {
+                        auth.login(tokens.access_token);
+                        if let Some(new_refresh_token) = tokens.refresh_token {
+                            keychain::store_refresh_token(&new_refresh_token);
+                            refresh_token = Some(new_refresh_token);
+                        }
                     }
                 }
             }
